@@ -1,7 +1,7 @@
 import { MedusaRequest, MedusaResponse } from "@medusajs/framework/http"
 import { ContainerRegistrationKeys, Modules } from "@medusajs/framework/utils"
-import { FAIRE_MODULE } from "../../../../../modules/faire"
-import FaireModuleService from "../../../../../modules/faire/service"
+import { FAIRE_MODULE } from "../../../../../../modules/faire"
+import FaireModuleService from "../../../../../../modules/faire/service"
 
 const PRODUCT_FIELDS = [
   "id",
