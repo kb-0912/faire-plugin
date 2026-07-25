@@ -180,6 +180,26 @@ class FaireModuleService extends MedusaService({ FaireSetting }) {
   }
 
   /**
+   * Get a single product from Faire by id (returns it even if DELETED, so this
+   * is useful for diagnosing "created but not visible").
+   */
+  public async getFaireProduct(faireProductId: string): Promise<any> {
+    try {
+      const response = await this.client.get(
+        `${this.faireApiUrl}/products/${faireProductId}`
+      )
+      return response.data
+    } catch (error: any) {
+      this.logApiError("getFaireProduct", error)
+      return {
+        error: true,
+        status: error.response?.status,
+        data: error.response?.data,
+      }
+    }
+  }
+
+  /**
    * Get all products from Faire (paginated).
    * Used for duplicate detection via idempotence_token matching.
    */
