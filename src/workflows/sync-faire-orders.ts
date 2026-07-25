@@ -151,7 +151,9 @@ const createMedusaOrdersStep = createStep(
                     lineItems.push({
                         title: item.product_name + (item.variant_name ? ` - ${item.variant_name}` : ""),
                         quantity: item.quantity,
-                        unit_price: item.price.amount_minor, // Faire V2: price.amount_minor (cents), Medusa V2: smallest unit (cents)
+                        // Faire `price.amount_minor` is in the smallest unit (cents), but
+                        // Medusa V2 stores prices in MAJOR units (dollars) — divide by 100.
+                        unit_price: (item.price?.amount_minor ?? 0) / 100,
                         ...(variantId ? { variant_id: variantId } : {}),
                     })
                 }
