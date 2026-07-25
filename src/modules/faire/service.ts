@@ -81,7 +81,7 @@ class FaireModuleService extends MedusaService({ FaireSetting }) {
     const variantOptionSets = this.buildVariantOptionSets(product)
 
     const faireProduct: any = {
-      idempotence_token: product.id,
+      idempotence_token: this.getProductIdempotenceToken(product),
       name: product.title,
       description: product.description || "",
       lifecycle_state: lifecycleState,
@@ -522,6 +522,20 @@ class FaireModuleService extends MedusaService({ FaireSetting }) {
   private getVariantIdempotenceToken(variant: any, product: any): string {
     const version = Number(product?.metadata?.faire_sync_version) || 0
     return version > 0 ? `${variant.id}:v${version}` : variant.id
+  }
+
+  /**
+   * Build the PRODUCT-level idempotence_token sent to Faire on create.
+   *
+   * Faire honours this token too (the official Faire plugins send a random-prefixed
+   * one). A constant `product.id` means that after deleting a product on Faire,
+   * re-creating returns the SAME deleted product instead of a new one. So we append
+   * the same `faire_sync_version` (bumped on Reset) used for variants — version 0 /
+   * absent → plain `product.id` (backward compatible with the first sync).
+   */
+  private getProductIdempotenceToken(product: any): string {
+    const version = Number(product?.metadata?.faire_sync_version) || 0
+    return version > 0 ? `${product.id}:v${version}` : product.id
   }
 
   /**

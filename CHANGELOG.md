@@ -27,6 +27,12 @@ Verified against Faire External API v2 (live docs) and Medusa v2.17.1 source.
 - **Batch inventory push** — `updateFaireInventoryBySkus` sends up to 50 SKUs per request.
 
 ### 🐛 Bug Fixes
+- **Re-create after delete now works — PRODUCT-level idempotence_token too.** Faire also
+  honours the product-level `idempotence_token` (the official Faire plugins send a
+  random-prefixed one). A constant `product.id` made re-sync return the deleted product
+  ("200 created" with `faire_variant_map: {}` and the same old `faire_product_id`). It now
+  carries the `faire_sync_version` suffix, so after a Reset the create makes a genuinely new
+  product. `GET /admin/faire/debug[?id=]` added to inspect what Faire actually holds.
 - **Re-create after delete now works (variant idempotence_token).** Faire honours the
   variant-level `idempotence_token`; a constant `variant.id` meant that after deleting a
   product on Faire, re-syncing returned the *deleted* product ("created" with nothing
