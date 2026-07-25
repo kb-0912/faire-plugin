@@ -9,6 +9,8 @@ type SyncResult = {
   updated?: number
   errors?: number
   skipped?: number
+  deleted?: number
+  cleared?: number
   message?: string
 }
 
@@ -19,6 +21,7 @@ type SettingsResponse = {
 const FairePage = () => {
   const [productResult, setProductResult] = useState<SyncResult | null>(null)
   const [orderResult, setOrderResult] = useState<SyncResult | null>(null)
+  const [resetResult, setResetResult] = useState<SyncResult | null>(null)
   const [wholesalePercent, setWholesalePercent] = useState<number>(50)
   const [wholesaleDirty, setWholesaleDirty] = useState(false)
   const queryClient = useQueryClient()
@@ -71,6 +74,26 @@ const FairePage = () => {
     onError: (err) => {
       console.error(err)
       toast.error("Failed to sync products to Faire")
+    },
+  })
+
+  // Reset mutation — deletes linked products on Faire + clears Faire metadata,
+  // so the next product sync re-creates them fresh.
+  const resetSync = useMutation({
+    mutationFn: () =>
+      sdk.client.fetch("/admin/faire/reset", {
+        method: "POST",
+        body: {},
+      }) as Promise<SyncResult>,
+    onSuccess: (data) => {
+      setResetResult(data)
+      toast.success(
+        "Faire links reset. Now click \"Sync Products to Faire\" to re-create."
+      )
+    },
+    onError: (err) => {
+      console.error(err)
+      toast.error("Failed to reset Faire products")
     },
   })
 
@@ -179,6 +202,63 @@ const FairePage = () => {
                 (productResult.updated ?? 0) === 0 &&
                 (productResult.errors ?? 0) === 0 && (
                   <Badge color="grey">All products up to date</Badge>
+                )}
+            </div>
+          )}
+        </div>
+      </Container>
+
+      {/* Reset / Re-sync Section */}
+      <Container className="divide-y p-0">
+        <div className="flex items-center justify-between px-6 py-4">
+          <div>
+            <Heading level="h2">Reset &amp; Re-sync</Heading>
+            <Text size="small" className="text-ui-fg-subtle mt-1">
+              Deletes the linked products <strong>on Faire</strong> and clears their Faire
+              metadata in Medusa (only the Faire keys — other metadata is preserved). Use this
+              to fix products that were synced incorrectly, then click{" "}
+              <strong>Sync Products to Faire</strong> to re-create them cleanly.
+            </Text>
+          </div>
+        </div>
+        <div className="flex items-center gap-4 px-6 py-4">
+          <Button
+            variant="danger"
+            onClick={() => {
+              if (
+                window.confirm(
+                  "This will DELETE all linked products on Faire and clear their Faire links in Medusa. Your Medusa products are NOT deleted. Continue?"
+                )
+              ) {
+                resetSync.mutate()
+              }
+            }}
+            isLoading={resetSync.isPending}
+          >
+            Reset Faire Links
+          </Button>
+
+          {resetResult && (
+            <div className="flex items-center gap-2">
+              {(resetResult.deleted ?? 0) > 0 && (
+                <Badge color="orange">
+                  {resetResult.deleted} deleted on Faire
+                </Badge>
+              )}
+              {(resetResult.cleared ?? 0) > 0 && (
+                <Badge color="blue">
+                  {resetResult.cleared} unlinked
+                </Badge>
+              )}
+              {(resetResult.errors ?? 0) > 0 && (
+                <Badge color="red">
+                  {resetResult.errors} errors
+                </Badge>
+              )}
+              {(resetResult.deleted ?? 0) === 0 &&
+                (resetResult.cleared ?? 0) === 0 &&
+                (resetResult.errors ?? 0) === 0 && (
+                  <Badge color="grey">Nothing linked to reset</Badge>
                 )}
             </div>
           )}

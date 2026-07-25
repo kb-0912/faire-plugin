@@ -92,6 +92,7 @@ module.exports = defineConfig({
 |--------|-------|-------------|
 | `POST` | `/admin/faire/sync` | Trigger product sync to Faire |
 | `POST` | `/admin/faire/orders` | Trigger order import from Faire |
+| `POST` | `/admin/faire/reset` | Delete linked products on Faire + clear Faire metadata (body `{ product_ids?: string[] }`, omit = all), then re-run sync to re-create |
 
 ## Data Mapping
 
