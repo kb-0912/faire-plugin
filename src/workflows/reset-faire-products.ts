@@ -61,16 +61,19 @@ const resetFaireProductsStep = createStep(
         errors++
       }
 
-      // 2) Clear ONLY the Faire metadata keys so the next sync treats it as a
-      //    new product. Medusa MERGES metadata (it spreads the existing object
-      //    first) and removes any key whose new value is "" — so every other
-      //    metadata key on the product is preserved untouched.
+      // 2) Clear ONLY the Faire link keys and BUMP faire_sync_version so the next
+      //    sync uses fresh variant idempotence_tokens (otherwise Faire would keep
+      //    returning the just-deleted product). Medusa MERGES metadata (it spreads
+      //    the existing object first) and removes any key whose new value is "" —
+      //    so every other metadata key on the product is preserved untouched.
+      const nextVersion = (Number(product.metadata.faire_sync_version) || 0) + 1
       try {
         await productModuleService.updateProducts(product.id, {
           metadata: {
             faire_product_id: "",
             faire_variant_map: "",
             synced_to_faire: "",
+            faire_sync_version: nextVersion,
           },
         })
         cleared++

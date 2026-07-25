@@ -134,13 +134,16 @@ class FaireModuleService extends MedusaService({ FaireSetting }) {
           wholesalePercent,
           images
         )
-        // Look up Faire variant ID from the product-level faire_variant_map
-        // (stored as JSON string: { "medusa_variant_id": "faire_variant_id" })
+        // Look up Faire variant ID from the product-level faire_variant_map.
+        // The map is keyed by the variant idempotence_token (which may include a
+        // sync-version suffix), so we must look up with the SAME token, not the
+        // raw variant.id.
         const variantMap = product.metadata?.faire_variant_map
           ? JSON.parse(product.metadata.faire_variant_map)
           : {}
-        if (variantMap[variant.id]) {
-          built.id = variantMap[variant.id]
+        const token = this.getVariantIdempotenceToken(variant, product)
+        if (variantMap[token]) {
+          built.id = variantMap[token]
         }
         return built
       }),
@@ -465,7 +468,7 @@ class FaireModuleService extends MedusaService({ FaireSetting }) {
     const availableQty = Number(variant.inventory_quantity)
 
     return {
-      idempotence_token: variant.id,
+      idempotence_token: this.getVariantIdempotenceToken(variant, product),
       name: variant.title,
       sku: variant.sku || undefined,
       ...(Number.isFinite(availableQty) && availableQty > 0
@@ -482,6 +485,23 @@ class FaireModuleService extends MedusaService({ FaireSetting }) {
         },
       ],
     }
+  }
+
+  /**
+   * Build the variant idempotence_token sent to Faire.
+   *
+   * Faire honours the variant-level `idempotence_token`: sending a token it has
+   * seen before returns the ORIGINAL variant/product — even if that product was
+   * later deleted. So a constant token (just `variant.id`) makes it impossible to
+   * re-create a product after deleting it (Faire keeps returning the deleted one).
+   *
+   * To fix that, we append the product's `faire_sync_version` (incremented on every
+   * Reset). Version 0 / absent → plain `variant.id` (backward compatible with the
+   * first sync); after a reset the token changes, so re-sync creates a fresh product.
+   */
+  private getVariantIdempotenceToken(variant: any, product: any): string {
+    const version = Number(product?.metadata?.faire_sync_version) || 0
+    return version > 0 ? `${variant.id}:v${version}` : variant.id
   }
 
   /**
