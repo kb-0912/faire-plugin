@@ -82,8 +82,9 @@ class FaireModuleService extends MedusaService({ FaireSetting }) {
 
     const faireProduct: any = {
       idempotence_token: this.getProductIdempotenceToken(product),
-      name: product.title,
-      description: product.description || "",
+      name: this.truncate(product.title, 255),
+      short_description: this.buildShortDescription(product),
+      description: this.truncate(product.description || "", 65535),
       lifecycle_state: lifecycleState,
       unit_multiplier: 1,
       minimum_order_quantity: 0,
@@ -123,8 +124,9 @@ class FaireModuleService extends MedusaService({ FaireSetting }) {
     const images = this.buildProductImages(product)
 
     const payload: any = {
-      name: product.title,
-      description: product.description || "",
+      name: this.truncate(product.title, 255),
+      short_description: this.buildShortDescription(product),
+      description: this.truncate(product.description || "", 65535),
       lifecycle_state: lifecycleState,
       images,
       variants: product.variants.map((variant: any) => {
@@ -389,6 +391,31 @@ class FaireModuleService extends MedusaService({ FaireSetting }) {
   // =============================================
   // PRIVATE HELPERS
   // =============================================
+
+  /**
+   * Truncate a string to a maximum length (Faire enforces field limits:
+   * name ≤ 255, short_description ≤ 75, description ≤ 65535).
+   */
+  private truncate(text: any, max: number): string {
+    const t = (text ?? "").toString()
+    return t.length > max ? t.slice(0, max) : t
+  }
+
+  /**
+   * Build Faire's `short_description` (hard limit 75 chars — the docs say 255 but
+   * the API rejects anything over 75). Prefers the Medusa subtitle, falls back to
+   * the description with HTML stripped. Faire auto-derives this from `description`
+   * when omitted, which overflows 75 and 400s — so we always send an explicit one.
+   */
+  private buildShortDescription(product: any): string {
+    const raw = product.subtitle || product.description || ""
+    const stripped = raw
+      .toString()
+      .replace(/<[^>]*>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+    return this.truncate(stripped, 75)
+  }
 
   /**
    * Map Medusa product status to Faire lifecycle_state.
