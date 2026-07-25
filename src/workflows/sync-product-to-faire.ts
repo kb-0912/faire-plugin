@@ -101,15 +101,16 @@ const syncProductsToFaireStep = createStep(
           }
         }
 
-        // Store Faire product & variant IDs in metadata
-        // _skip_faire_sync prevents the product.updated subscriber from
-        // re-triggering an update to Faire (which was just done above)
+        // Store Faire product & variant IDs in metadata.
+        // Medusa merges metadata on update, so existing keys are preserved.
+        // (No skip flag: the product.updated subscriber is idempotent — at worst
+        // it issues one redundant PATCH to Faire, and never writes metadata itself,
+        // so there is no update loop.)
         await productModuleService.updateProducts(product.id, {
           metadata: {
             faire_product_id: faireProduct.id,
             synced_to_faire: true,
             faire_variant_map: JSON.stringify(faireVariantMap),
-            _skip_faire_sync: true,
           },
         })
 
@@ -148,7 +149,6 @@ const syncProductsToFaireStep = createStep(
           await productModuleService.updateProducts(product.id, {
             metadata: {
               faire_variant_map: JSON.stringify(existingMap),
-              _skip_faire_sync: true,
             },
           })
         }

@@ -54,7 +54,9 @@ export default async function handleProductUpdated({
       return
     }
 
-    // Only sync if product has been previously synced to Faire
+    // Only sync if product has been previously synced to Faire.
+    // (New products are created by the product.created subscriber; this handler
+    // only mirrors updates for products that already exist on Faire.)
     const faireProductId = product.metadata?.faire_product_id
     if (!faireProductId) {
       logger.debug(
@@ -63,18 +65,13 @@ export default async function handleProductUpdated({
       return
     }
 
-    // Guard: skip if the update was triggered by the sync workflow itself
-    // (e.g., when sync workflow saves faire_product_id/faire_variant_map to metadata)
-    // The sync workflow sets _skip_faire_sync=true temporarily
-    if (product.metadata?._skip_faire_sync) {
-      logger.debug(
-        `[Faire Sync] Skipping re-sync for ${data.id} (triggered by sync workflow)`
-      )
-      return
-    }
-
-    // Update the product on Faire
-    await faireService.updateFaireProduct(faireProductId, product)
+    // Update the product on Faire using the configured wholesale percentage.
+    const wholesalePercent = await faireService.getWholesalePercent()
+    await faireService.updateFaireProduct(
+      faireProductId,
+      product,
+      wholesalePercent
+    )
     logger.info(
       `[Faire Sync] Updated product "${product.title}" (${faireProductId}) on Faire`
     )

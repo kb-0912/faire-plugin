@@ -12,6 +12,7 @@ import FaireSetting from "./models/faire-setting"
 class FaireModuleService extends MedusaService({ FaireSetting }) {
   private client: AxiosInstance
   private faire_api_key: string
+  private faire_app_credentials?: string
   private faireApiUrl: string
   private defaultWholesalePercent: number
 
@@ -19,6 +20,7 @@ class FaireModuleService extends MedusaService({ FaireSetting }) {
     super(container)
     this.faireApiUrl = "https://www.faire.com/external-api/v2"
     this.faire_api_key = options.faire_api_key
+    this.faire_app_credentials = options.faire_app_credentials
     this.defaultWholesalePercent = options.wholesale_price_percentage ?? 50
     this.client = this.createFaireClient()
   }
@@ -244,6 +246,45 @@ class FaireModuleService extends MedusaService({ FaireSetting }) {
     }
   }
 
+  /**
+   * Update on-hand inventory for many SKUs at once.
+   * Faire's PATCH /product-inventory/by-skus accepts a batch `inventories` array.
+   * Sends in chunks to stay within request limits.
+   */
+  public async updateFaireInventoryBySkus(
+    items: Array<{ sku: string; onHandQuantity: number }>
+  ): Promise<{ updated: number; errors: number }> {
+    const valid = items.filter((i) => i.sku)
+    if (!valid.length) return { updated: 0, errors: 0 }
+
+    const CHUNK = 50
+    let updated = 0
+    let errors = 0
+
+    for (let i = 0; i < valid.length; i += CHUNK) {
+      const chunk = valid.slice(i, i + CHUNK)
+      const payload = {
+        inventories: chunk.map((it) => ({
+          sku: it.sku,
+          on_hand_quantity: Math.max(0, Math.floor(it.onHandQuantity)),
+        })),
+      }
+
+      try {
+        await this.client.patch(
+          `${this.faireApiUrl}/product-inventory/by-skus`,
+          payload
+        )
+        updated += chunk.length
+      } catch (error: any) {
+        this.logApiError("updateFaireInventoryBySkus", error)
+        errors += chunk.length
+      }
+    }
+
+    return { updated, errors }
+  }
+
   // =============================================
   // ORDERS
   // =============================================
@@ -251,6 +292,10 @@ class FaireModuleService extends MedusaService({ FaireSetting }) {
   /**
    * Fetch orders from Faire, optionally filtered by state.
    * Fetches all pages using cursor pagination.
+   *
+   * NOTE: Faire's GET /orders does NOT support a `states` filter param — it only
+   * supports `excluded_states`. So we filter by state client-side to avoid
+   * accidentally importing non-NEW orders (PROCESSING, CANCELED, DELIVERED, ...).
    */
   public async getFaireOrders(
     states?: string[]
@@ -262,7 +307,6 @@ class FaireModuleService extends MedusaService({ FaireSetting }) {
       do {
         const params: any = { limit: 50 }
         if (cursor) params.cursor = cursor
-        if (states?.length) params.states = states.join(",")
 
         const response = await this.client.get(
           `${this.faireApiUrl}/orders`,
@@ -272,6 +316,11 @@ class FaireModuleService extends MedusaService({ FaireSetting }) {
         allOrders.push(...data.orders)
         cursor = data.cursor
       } while (cursor)
+
+      if (states?.length) {
+        const wanted = new Set(states)
+        return allOrders.filter((o) => wanted.has(o.state))
+      }
 
       return allOrders
     } catch (error: any) {
@@ -382,7 +431,7 @@ class FaireModuleService extends MedusaService({ FaireSetting }) {
   /**
    * Build a single Faire variant from a Medusa variant.
    * - Reads dynamic options from variant.options
-   * - Medusa V2 prices are already in smallest unit (cents), no multiplication needed
+   * - Medusa V2 `prices.amount` is in MAJOR units (dollars) → convert to cents (×100)
    * - Wholesale price = retail_price × wholesalePercent / 100
    */
   private buildFaireVariant(
@@ -397,7 +446,10 @@ class FaireModuleService extends MedusaService({ FaireSetting }) {
         (p: any) => p.currency_code === "usd"
       ) ?? variant.prices?.[0]
 
-    const retailPriceCents = usdPrice?.amount ?? 0
+    // IMPORTANT: Medusa V2 stores `prices.amount` in MAJOR units (e.g. 25 = $25.00),
+    // NOT in the smallest unit. Faire expects `amount_minor` in cents, so multiply by 100.
+    const retailPriceMajor = usdPrice?.amount ?? 0
+    const retailPriceCents = Math.round(retailPriceMajor * 100)
     const wholesalePriceCents = Math.round(
       retailPriceCents * (wholesalePercent / 100)
     )
@@ -406,11 +458,19 @@ class FaireModuleService extends MedusaService({ FaireSetting }) {
     // Build options dynamically from variant.options
     const options = this.buildVariantOptions(variant, product)
 
+    // Inventory is owned by the `poll-faire-inventory` job (on_hand endpoint).
+    // `variant.inventory_quantity` is unreliable via query.graph in Medusa V2, so
+    // only send available_quantity when we actually have a positive value —
+    // sending 0 here would wrongly mark the variant out of stock on Faire.
+    const availableQty = Number(variant.inventory_quantity)
+
     return {
       idempotence_token: variant.id,
       name: variant.title,
       sku: variant.sku || undefined,
-      available_quantity: variant.inventory_quantity ?? 0,
+      ...(Number.isFinite(availableQty) && availableQty > 0
+        ? { available_quantity: availableQty }
+        : {}),
       images: fallbackImages,
       options,
       // V2 prices format with geo_constraint
@@ -464,13 +524,26 @@ class FaireModuleService extends MedusaService({ FaireSetting }) {
    * Create the axios client for Faire API.
    */
   private createFaireClient(): AxiosInstance {
+    // Faire External API v2 auth:
+    // - OAuth apps use `X-FAIRE-OAUTH-ACCESS-TOKEN` together with `X-FAIRE-APP-CREDENTIALS`.
+    // - Legacy single-brand tokens use `X-FAIRE-ACCESS-TOKEN`.
+    // If app credentials are provided we send the OAuth pair; otherwise fall back
+    // to the legacy header for backward compatibility.
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    }
+
+    if (this.faire_app_credentials) {
+      headers["X-FAIRE-OAUTH-ACCESS-TOKEN"] = this.faire_api_key
+      headers["X-FAIRE-APP-CREDENTIALS"] = this.faire_app_credentials
+    } else {
+      headers["X-FAIRE-ACCESS-TOKEN"] = this.faire_api_key
+    }
+
     return axios.create({
       baseURL: this.faireApiUrl,
       timeout: 30000,
-      headers: {
-        "Content-Type": "application/json",
-        "X-FAIRE-ACCESS-TOKEN": this.faire_api_key,
-      },
+      headers,
       validateStatus: (status) => status >= 200 && status < 300,
     })
   }

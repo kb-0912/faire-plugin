@@ -1,6 +1,6 @@
 {
   "name": "@kb0912/faire-plugin",
-  "version": "0.3.0",
+  "version": "1.0.0",
   "description": "Medusa V2 plugin for bidirectional sync with Faire wholesale marketplace.",
   "author": "KB",
   "license": "MIT",

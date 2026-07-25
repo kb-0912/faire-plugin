@@ -1,67 +1,86 @@
 import type { SubscriberArgs, SubscriberConfig } from "@medusajs/framework"
-import { ContainerRegistrationKeys, Modules } from "@medusajs/framework/utils"
+import { ContainerRegistrationKeys } from "@medusajs/framework/utils"
 import { FAIRE_MODULE } from "../modules/faire"
 import FaireModuleService from "../modules/faire/service"
 
 /**
- * Handles inventory level changes in Medusa.
- * Syncs the updated inventory to Faire using the variant's SKU.
+ * Handles product variant changes in Medusa (price, SKU, title, options) and
+ * mirrors them to Faire by re-pushing the parent product.
  *
- * Listens to the Medusa core event "inventory-level.updated" which fires
- * when stock quantities change.
+ * Listens to the real Medusa event `product-variant.updated` (emitted by
+ * updateProductVariantsWorkflow / batchProductVariantsWorkflow).
+ *
+ * NOTE: This does NOT cover stock-quantity changes — Medusa's Inventory Module
+ * does not emit any event when stock levels change. Inventory is synced by the
+ * scheduled `poll-faire-inventory` job instead.
  */
-export default async function handleInventoryUpdated({
+export default async function handleProductVariantUpdated({
   event: { data },
   container,
 }: SubscriberArgs<{ id: string }>) {
   const logger = container.resolve(ContainerRegistrationKeys.LOGGER)
-  const faireService =
-    container.resolve<FaireModuleService>(FAIRE_MODULE)
+  const query = container.resolve(ContainerRegistrationKeys.QUERY)
+  const faireService = container.resolve<FaireModuleService>(FAIRE_MODULE)
 
   try {
-    const inventoryService = container.resolve(Modules.INVENTORY)
+    // Resolve the parent product id from the variant.
+    const { data: variants } = await query.graph({
+      entity: "product_variant",
+      fields: ["id", "product_id"],
+      filters: { id: [data.id] },
+    })
 
-    // Fetch the inventory level to get location/item details
-    const inventoryLevel = await inventoryService.retrieveInventoryLevel(
-      data.id
-    )
+    const productId = variants[0]?.product_id
+    if (!productId) return
 
-    if (!inventoryLevel) {
-      logger.warn(
-        `[Faire Inventory] Inventory level ${data.id} not found`
-      )
-      return
-    }
+    const { data: products } = await query.graph({
+      entity: "product",
+      fields: [
+        "id",
+        "title",
+        "description",
+        "status",
+        "thumbnail",
+        "images.url",
+        "options.id",
+        "options.title",
+        "options.values.id",
+        "options.values.value",
+        "variants.id",
+        "variants.title",
+        "variants.sku",
+        "variants.options.id",
+        "variants.options.option_value.value",
+        "variants.options.option.title",
+        "variants.prices.currency_code",
+        "variants.prices.amount",
+        "variants.inventory_quantity",
+        "metadata",
+      ],
+      filters: { id: [productId] },
+    })
 
-    // Fetch the inventory item to get the SKU
-    const inventoryItem = await inventoryService.retrieveInventoryItem(
-      inventoryLevel.inventory_item_id
-    )
+    const product = products[0]
+    const faireProductId = product?.metadata?.faire_product_id
+    if (!faireProductId) return
 
-    if (!inventoryItem?.sku) {
-      logger.debug(
-        `[Faire Inventory] No SKU for inventory item ${inventoryLevel.inventory_item_id}, skipping`
-      )
-      return
-    }
-
-    const onHandQuantity = inventoryLevel.stocked_quantity ?? 0
-
-    await faireService.updateFaireInventoryBySku(
-      inventoryItem.sku,
-      onHandQuantity
+    const wholesalePercent = await faireService.getWholesalePercent()
+    await faireService.updateFaireProduct(
+      faireProductId,
+      product,
+      wholesalePercent
     )
 
     logger.info(
-      `[Faire Inventory] Updated SKU "${inventoryItem.sku}" → quantity: ${onHandQuantity}`
+      `[Faire Sync] Updated product "${product.title}" (${faireProductId}) on Faire (variant change)`
     )
   } catch (error: any) {
     logger.error(
-      `[Faire Inventory] Failed to sync inventory ${data.id}: ${error.message}`
+      `[Faire Sync] Failed to sync variant update ${data.id}: ${error.message}`
     )
   }
 }
 
 export const config: SubscriberConfig = {
-  event: "inventory-level.updated",
+  event: "product-variant.updated",
 }

@@ -1,5 +1,45 @@
 # Changelog
 
+## [1.0.0] - 2026-07-25
+
+Verified against Faire External API v2 (live docs) and Medusa v2.17.1 source.
+
+### 🚨 Breaking Changes / Behavior
+- **Price units corrected (100× fix).** Medusa V2 stores `prices.amount` in **major units**
+  (e.g. `25` = `$25.00`), NOT cents. Prices are now multiplied by 100 for Faire's
+  `amount_minor`. This reverses the incorrect v0.1.0 change that removed the `×100` and
+  caused products to be pushed to Faire at 1/100th of their real price.
+- **Inventory sync moved from a (non-existent) event to a scheduled job.** Medusa V2 does
+  **not** emit any inventory event (`inventory.inventory-level.updated` is defined but
+  disabled — see Medusa TODO #14478), so the old `inventory-level.updated` subscriber never
+  fired. Replaced by `poll-faire-inventory` (every 10 min), reading
+  `inventory_item.location_levels.stocked_quantity` and pushing via batched
+  `PATCH /product-inventory/by-skus`.
+
+### ✨ New Features
+- **Auto-create on `product.created`** — new Medusa products are now created on Faire in real
+  time (previously only the manual bulk-sync button created products).
+- **Variant change sync** — `product-variant.updated` subscriber mirrors SKU/price/option
+  changes to Faire.
+- **OAuth auth support** — new `faire_app_credentials` option sends
+  `X-FAIRE-OAUTH-ACCESS-TOKEN` + `X-FAIRE-APP-CREDENTIALS` (v2 OAuth apps); falls back to the
+  legacy `X-FAIRE-ACCESS-TOKEN` header when omitted.
+- **Batch inventory push** — `updateFaireInventoryBySkus` sends up to 50 SKUs per request.
+
+### 🐛 Bug Fixes
+- **`_skip_faire_sync` flag was permanent** — it was written to product metadata and never
+  cleared. Because Medusa *merges* metadata, it persisted forever and silently blocked **all**
+  future `product.updated` syncs after the first sync. Removed entirely (the update subscriber
+  is idempotent and never writes metadata, so no loop exists).
+- **Wholesale % ignored on real-time updates** — the `product.updated` subscriber called
+  `updateFaireProduct` without the percentage, defaulting to a hardcoded 50%. It now reads the
+  configured value from the DB (`getWholesalePercent()`).
+- **Order import fetched wrong orders** — `GET /orders` has no `states` param (only
+  `excluded_states`), so `states=NEW` was ignored and non-NEW orders could be imported. Now
+  filtered client-side by `state === "NEW"`.
+- **`available_quantity: 0` marked variants out of stock** — variant create no longer sends a
+  `0` from the unreliable `variants.inventory_quantity`; stock is owned by the inventory job.
+
 ## [0.3.0] - 2026-06-05
 
 ### ⬆️ Dependencies

@@ -1,6 +1,10 @@
 // ===== Plugin Options =====
 export type FaireModuleOptions = {
     faire_api_key: string
+    // Required only for OAuth apps. When set, requests use the v2 OAuth headers
+    // (X-FAIRE-OAUTH-ACCESS-TOKEN + X-FAIRE-APP-CREDENTIALS). When omitted, the
+    // legacy X-FAIRE-ACCESS-TOKEN header is used.
+    faire_app_credentials?: string
     wholesale_price_percentage?: number // default 50
 }
 

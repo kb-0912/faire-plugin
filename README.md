@@ -6,8 +6,9 @@ Medusa V2 plugin for **bidirectional sync** between [MedusaJS](https://medusajs.
 
 ### 🔄 Product Sync (Medusa → Faire)
 
-- **Auto-create** products on Faire when synced from Medusa
-- **Auto-update** existing Faire products when changed in Medusa (name, description, images, price)
+- **Auto-create** on Faire in real time via the `product.created` subscriber (Medusa is the single source of truth)
+- **Auto-update** existing Faire products on `product.updated` / `product-variant.updated` (name, description, status, images, price, SKUs, options)
+- **Bulk sync** button in Admin creates any missing products and updates the rest
 - **Dynamic options mapping** — product options (Size, Color, etc.) are read from Medusa, not hardcoded
 - **Idempotent** — uses `idempotence_token` to prevent duplicate products on Faire
 - **Tracks Faire IDs** — stores `faire_product_id` and `faire_variant_map` in product metadata for future updates
@@ -21,9 +22,10 @@ Medusa V2 plugin for **bidirectional sync** between [MedusaJS](https://medusajs.
 
 ### 📊 Inventory Sync
 
-- Listens to Medusa `inventory-level.updated` events
-- Syncs `stocked_quantity` (on-hand) to Faire via SKU matching
-- Uses Faire V2 API field `on_hand_quantity`
+- **Scheduled poll job** (`poll-faire-inventory`, every 10 min) — Medusa V2's Inventory
+  Module emits **no** stock-change event, so inventory is synced by polling, not a subscriber
+- Reads `inventory_item.location_levels.stocked_quantity` (summed across locations), matched by SKU
+- Pushes to Faire via the batched `PATCH /product-inventory/by-skus` endpoint (`on_hand_quantity`)
 
 ### 🛒 Order Import (Faire → Medusa)
 
@@ -60,17 +62,29 @@ module.exports = defineConfig({
       resolve: "@kb0912/faire-plugin",
       options: {
         faire_api_key: process.env.FAIRE_API_KEY,
+        // Required only for Faire OAuth apps (sends X-FAIRE-OAUTH-ACCESS-TOKEN
+        // + X-FAIRE-APP-CREDENTIALS). Omit for legacy single-brand tokens.
+        faire_app_credentials: process.env.FAIRE_APP_CREDENTIALS,
+        // Wholesale price as a % of the Medusa USD retail price (default 50).
+        // Can also be changed at runtime from the Admin "Faire" page.
+        wholesale_price_percentage: 50,
       },
     },
   ],
 })
 ```
 
-### Environment Variables
+### Options
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `FAIRE_API_KEY` | ✅ | Your Faire API access token ([get it here](https://faire.github.io/external-api-v2-docs#using-oauth)) |
+| Option | Required | Description |
+|--------|----------|-------------|
+| `faire_api_key` | ✅ | Your Faire API access token. For **OAuth apps** this is the OAuth access token; for legacy brand integrations it is the brand token. |
+| `faire_app_credentials` | ⛳️ | Required **only for OAuth apps**. When set, requests use `X-FAIRE-OAUTH-ACCESS-TOKEN` + `X-FAIRE-APP-CREDENTIALS`. When omitted, the legacy `X-FAIRE-ACCESS-TOKEN` header is used. |
+| `wholesale_price_percentage` | — | Wholesale price as a % of retail (default `50`). |
+
+> **Pricing note:** Medusa V2 stores variant prices in **major units** (e.g. `25` = `$25.00`).
+> The plugin converts to Faire's `amount_minor` (cents) automatically. Only the Medusa **USD**
+> price is used as retail; wholesale = retail × `wholesale_price_percentage`.
 
 ## API Routes
 
