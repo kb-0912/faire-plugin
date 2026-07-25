@@ -73,6 +73,7 @@ const resetFaireProductsStep = createStep(
             faire_product_id: "",
             faire_variant_map: "",
             synced_to_faire: "",
+            _skip_faire_sync: "", // remove the legacy flag written by old versions
             faire_sync_version: nextVersion,
           },
         })
