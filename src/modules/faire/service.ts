@@ -456,7 +456,9 @@ class FaireModuleService extends MedusaService({ FaireSetting }) {
     if (product.options?.length) {
       return product.options.map((option: any) => ({
         name: option.title,
-        values: option.values?.map((v: any) => v.value) ?? [],
+        values: (option.values?.map((v: any) => v.value) ?? []).filter(
+          (v: any) => v
+        ),
       }))
     }
 
@@ -526,7 +528,7 @@ class FaireModuleService extends MedusaService({ FaireSetting }) {
       // V2 prices format with geo_constraint
       prices: [
         {
-          geo_constraint: { country: currencyCode === "USD" ? "USA" : currencyCode === "CAD" ? "CAN" : "USA" },
+          geo_constraint: this.mapCurrencyToGeo(currencyCode),
           wholesale_price: { amount_minor: wholesalePriceCents, currency: currencyCode },
           retail_price: { amount_minor: retailPriceCents, currency: currencyCode },
         },
@@ -566,6 +568,29 @@ class FaireModuleService extends MedusaService({ FaireSetting }) {
   }
 
   /**
+   * Map a Medusa currency code to a Faire price geo_constraint.
+   * Faire only accepts country USA/CAN/GBR/AUS, or country_group EUROPEAN_UNION.
+   */
+  private mapCurrencyToGeo(
+    currencyCode: string
+  ): { country: string } | { country_group: string } {
+    switch ((currencyCode || "USD").toUpperCase()) {
+      case "USD":
+        return { country: "USA" }
+      case "CAD":
+        return { country: "CAN" }
+      case "GBP":
+        return { country: "GBR" }
+      case "AUD":
+        return { country: "AUS" }
+      case "EUR":
+        return { country_group: "EUROPEAN_UNION" }
+      default:
+        return { country: "USA" }
+    }
+  }
+
+  /**
    * Build Faire variant options from Medusa variant options.
    */
   private buildVariantOptions(
@@ -574,20 +599,28 @@ class FaireModuleService extends MedusaService({ FaireSetting }) {
   ): Array<{ name: string; value: string }> {
     // If variant has explicit options (Medusa v2 structure)
     if (variant.options?.length) {
-      return variant.options.map((opt: any) => ({
-        name: opt.option?.title ?? opt.name ?? "Option",
-        value: opt.option_value?.value ?? opt.value ?? variant.title,
-      }))
+      const opts = variant.options
+        .map((opt: any) => ({
+          name: opt.option?.title ?? opt.name ?? "Option",
+          value: opt.option_value?.value ?? opt.value ?? "",
+        }))
+        // Faire rejects options with an empty name or value.
+        .filter((o: any) => o.name && o.value)
+      if (opts.length) return opts
     }
 
-    // Fallback: use product options and variant title
-    if (product.options?.length) {
-      return product.options.map((option: any) => ({
-        name: option.title,
-        value: variant.title,
-      }))
+    // A product with multiple variants MUST give each variant options, or Faire
+    // rejects with "A product with multiple variants must have options". If the
+    // Medusa product has no explicit options, synthesize a single "Variant" option
+    // from the title — this mirrors buildVariantOptionSets so the option set and
+    // the variant options stay consistent.
+    const isMultiVariant = (product.variants?.length ?? 0) > 1
+    if (isMultiVariant && variant.title && variant.title !== "Default") {
+      return [{ name: "Variant", value: variant.title }]
     }
 
+    // Single-variant / default product: Faire accepts a lone variant with no
+    // options, so returning [] here is correct.
     return []
   }
 
